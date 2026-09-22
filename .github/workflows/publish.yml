@@ -1,0 +1,141 @@
+# Publish the deepseek-harness NODE IMAGE to GitHub Container Registry.
+#
+# THIS FILE IS THE ONLY FILE WE AUTHOR IN THIS REPOSITORY. The harness sources
+# are treated as third-party/upstream: nothing else here is touched.
+#
+# TRIGGERS / TAG POLICY (same as nexuslbs/workbench):
+#   * push to branch `stable`         -> ghcr.io/nexuslbs/deepseek-harness:latest
+#   * push of a tag `vX.Y.Z`          -> ...:X.Y.Z  AND  ...:latest
+#   * any other push / PR             -> no build
+#
+# PUBLISH-ONLY: there is no test step and no build-once-then-test dance - the
+# job builds the image once and pushes it. The Dockerfile is INLINE (heredoc in
+# this workflow) on purpose: adding a Dockerfile to the repository root would
+# mean touching the upstream tree.
+name: publish
+
+on:
+  push:
+    branches: [stable]
+    tags: ['v*']
+  workflow_dispatch:
+
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  IMAGE: ghcr.io/nexuslbs/deepseek-harness
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Derive image tags
+        id: meta
+        run: |
+          set -euo pipefail
+          tags=""
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            v="${GITHUB_REF_NAME}"
+            case "$v" in
+              v[0-9]*.[0-9]*.[0-9]*) : ;;
+              *) echo "tag '$v' is not vX.Y.Z - refusing to publish"; exit 1 ;;
+            esac
+            ver="${v#v}"
+            tags="${IMAGE}:${ver}
+${IMAGE}:latest"
+          elif [ "${GITHUB_REF_NAME}" = "stable" ]; then
+            tags="${IMAGE}:latest"
+          else
+            echo "no publish trigger for ref ${GITHUB_REF_NAME}"; exit 1
+          fi
+          {
+            echo "tags<<EOF"
+            echo "$tags"
+            echo "EOF"
+            echo "version=$(printf '%s' "$tags" | head -n1 | sed 's/.*://')"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Write the inline Dockerfile
+        run: |
+          cat > /tmp/Dockerfile <<'DOCKERFILE'
+          # syntax=docker/dockerfile:1
+          #
+          # deepseek-harness NODE IMAGE (ghcr.io/nexuslbs/deepseek-harness)
+          #
+          # The build context IS this repository: the image carries the harness
+          # checkout (upstream sources) and nothing else. It ships the MINIMAL
+          # config: no plugins are bundled, every capability comes from the
+          # cordis config file / the plugin sources mapped at run time.
+          FROM node:22-bookworm-slim
+
+          ENV DEBIAN_FRONTEND=noninteractive \
+              NODE_ENV=production \
+              DSH_HOME=/var/lib/workstation \
+              WORKSTATION_DIR=/harness
+
+          RUN apt-get update \
+           && apt-get install -y --no-install-recommends \
+                ca-certificates curl git openssh-client python3 make g++ \
+           && rm -rf /var/lib/apt/lists/* \
+           && corepack enable
+
+          WORKDIR /harness
+          COPY . .
+          RUN pnpm install --frozen-lockfile \
+           && pnpm run build
+
+          # The runtime plugin sources live on a NAMED VOLUME so that a
+          # container/image rebuild never re-clones them.
+          RUN mkdir -p /var/lib/workstation/sources
+
+          EXPOSE 8080
+          CMD ["node", "apps/cli/lib/bin.js", "--profile", "headless"]
+          DOCKERFILE
+
+      - name: Build and push
+        run: |
+          set -euo pipefail
+          tag_args=""
+          while IFS= read -r t; do
+            [ -n "$t" ] || continue
+            tag_args="$tag_args -t $t"
+          done <<< "${{ steps.meta.outputs.tags }}"
+          # shellcheck disable=SC2086
+          docker buildx build \
+            --file /tmp/Dockerfile \
+            --platform linux/amd64 \
+            --label "org.opencontainers.image.source=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" \
+            --label "org.opencontainers.image.revision=${GITHUB_SHA}" \
+            $tag_args \
+            --push .
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo '## deepseek-harness image'
+            echo
+            echo '| image |'
+            echo '| --- |'
+            printf '%s\n' "${{ steps.meta.outputs.tags }}" | sed 's/^/| /; s/$/ |/'
+            echo
+            echo "revision: \`${GITHUB_SHA}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
