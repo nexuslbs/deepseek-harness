@@ -93,7 +93,7 @@ jobs:
 
           RUN apt-get update \
            && apt-get install -y --no-install-recommends \
-                ca-certificates curl git openssh-client python3 make g++ \
+                ca-certificates curl git openssh-client python3 make g++ build-essential \
            && rm -rf /var/lib/apt/lists/* \
            && corepack enable
 
