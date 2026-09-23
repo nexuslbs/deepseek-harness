@@ -8,10 +8,12 @@
 # its own tag.
 name: Release (vendor)
 
+# nexuslbs fork policy (thread 2857): this workflow MUST NOT run automatically.
+# All automatic triggers inherited from upstream (push / pull_request / schedule /
+# issues / ...) were removed - the only automatic workflow in this repository is
+# publish.yml (tag `vX.Y.Z` -> :X.Y.Z, push to `stable` -> :latest).
+# Run this workflow by hand from the Actions tab (workflow_dispatch).
 on:
-  pull_request:
-  push:
-    branches: [master]
   workflow_dispatch:
 
 permissions:

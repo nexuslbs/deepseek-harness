@@ -27,17 +27,14 @@ name: E2E (real DeepSeek API)
 #
 # Note: scheduled triggers are auto-disabled after 60 days of repo inactivity;
 # push/pull_request/workflow_dispatch act as backstops.
+# nexuslbs fork policy (thread 2857): this workflow MUST NOT run automatically.
+# All automatic triggers inherited from upstream (push / pull_request / schedule /
+# issues / ...) were removed - the only automatic workflow in this repository is
+# publish.yml (tag `vX.Y.Z` -> :X.Y.Z, push to `stable` -> :latest).
+# Run this workflow by hand from the Actions tab (workflow_dispatch).
 on:
   workflow_dispatch:
-  push:
-    branches: [main, master]
-  pull_request:
-  schedule:
-    # 00:17 UTC nightly = 08:17 Asia/Shanghai — off the top-of-hour cron stampede.
-    - cron: '17 0 * * *'
 
-# Keep only the newest validation in each workflow/ref, including master
-# pushes, nightly runs, and manual dispatches.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true

@@ -50,7 +50,7 @@ jobs:
             esac
             ver="${v#v}"
             tags="${IMAGE}:${ver}
-${IMAGE}:latest"
+          ${IMAGE}:latest"
           elif [ "${GITHUB_REF_NAME}" = "stable" ]; then
             tags="${IMAGE}:latest"
           else
