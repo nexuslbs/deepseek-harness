@@ -99,6 +99,16 @@ jobs:
 
           WORKDIR /harness
           COPY . .
+          # The build context carries the harness .git directory. Upstream keeps a
+          # DORMANT .git/config.worktree in it; the repository's own postinstall
+          # (scripts/install-lefthook.mjs) then refuses to enable
+          # extensions.worktreeConfig while that file holds user-owned settings and
+          # aborts with ELIFECYCLE / exit code 1:
+          #   "[install-lefthook] cannot enable extensions.worktreeConfig while
+          #    current dormant worktree config contains user-owned settings" (CI run 8/9)
+          # Removing ONLY that worktree config file unblocks the install; git metadata
+          # is otherwise kept (the build stamps the version from it).
+          RUN rm -f .git/config.worktree
           RUN pnpm install --frozen-lockfile \
            && pnpm run build
 
