@@ -1,13 +1,9 @@
 name: weighted-approval-review-event
 run-name: weighted-approval-review-event:${{ github.event.pull_request.number }}
 
-# nexuslbs fork policy (thread 2857): this workflow MUST NOT run automatically.
-# All automatic triggers inherited from upstream (push / pull_request / schedule /
-# issues / ...) were removed - the only automatic workflow in this repository is
-# publish.yml (tag `vX.Y.Z` -> :X.Y.Z, push to `stable` -> :latest).
-# Run this workflow by hand from the Actions tab (workflow_dispatch).
 on:
-  workflow_dispatch:
+  pull_request_review:
+    types: [submitted, edited, dismissed]
 
 permissions: {}
 
