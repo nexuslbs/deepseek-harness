@@ -92,9 +92,29 @@ jobs:
 
           RUN apt-get update \
            && apt-get install -y --no-install-recommends \
-                ca-certificates curl git openssh-client python3 make g++ build-essential \
+                ca-certificates curl git openssh-client python3 make g++ build-essential tini \
            && rm -rf /var/lib/apt/lists/* \
            && corepack enable
+
+          # docker CLIENT + compose plugin (NO daemon): the workstation reaches
+          # external tooling - himalaya lives ONLY in the `toolbox` service of the
+          # stack - through the `container` transport of the run-time plugins
+          # config (config/workstation.yml), which shells out to
+          # `docker compose --project-directory <dir> exec -T <service> sh -c ...`
+          # against the daemon socket mounted at run time. Same runtime contract
+          # as services/workstation/Dockerfile (omni-root). BROWSER-FREE STAYS:
+          # no Chromium, no playwright, no browser runtime libs in this image.
+          RUN apt-get update \
+           && apt-get install -y --no-install-recommends ca-certificates git curl openssh-client \
+           && install -m 0755 -d /etc/apt/keyrings \
+           && curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc \
+           && chmod a+r /etc/apt/keyrings/docker.asc \
+           && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian bookworm stable" > /etc/apt/sources.list.d/docker.list \
+           && apt-get update \
+           && apt-get install -y --no-install-recommends docker-ce-cli docker-compose-plugin \
+           && docker --version \
+           && docker compose version \
+           && rm -rf /var/lib/apt/lists/*
 
           # BROWSER-FREE BY DESIGN (operator rule, post-mortem §8bis.1): the
           # browser runs in its OWN `browser` service/image; this image must
