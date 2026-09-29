@@ -173,7 +173,8 @@ jobs:
               tar -xzf /tmp/gh.tgz -C /tmp; \
               mv /tmp/gh_2.63.2_linux_${arch}/bin/gh /usr/local/bin/gh; \
               rm -rf /tmp/gh.tgz /tmp/gh_2.63.2_linux_${arch}; \
-              curl -fsSL https://awscli.amazonaws.com/awscli-exe-linux-${arch}.zip -o /tmp/awscliv2.zip; \
+              aws_arch=$( [ "${arch}" = "amd64" ] && echo x86_64 || echo "${arch}" ); \
+              curl -fsSL https://awscli.amazonaws.com/awscli-exe-linux-${aws_arch}.zip -o /tmp/awscliv2.zip; \
               unzip -q /tmp/awscliv2.zip -d /tmp/aws; \
               /tmp/aws/aws/install --update; \
               rm -rf /tmp/awscliv2.zip /tmp/aws; \
