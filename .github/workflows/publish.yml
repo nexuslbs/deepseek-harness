@@ -83,45 +83,25 @@ jobs:
           # checkout (upstream sources) and nothing else. It ships the MINIMAL
           # config: no plugins are bundled, every capability comes from the
           # cordis config file / the plugin sources mapped at run time.
-          FROM node:22-bookworm-slim
+          #
+          # MULTI-STAGE (reconciled with the tracked MINIMAL Dockerfile of
+          # omni-root services/workstation/Dockerfile, gap-analysis report
+          # section 2 "measured drift to fix", decision F): the build
+          # toolchain (build-essential/python3/make/g++) lives ONLY in the
+          # builder stage - the published runtime carries base services +
+          # docker CLI + the Zone-1 additions, and NO ffmpeg (moved to the
+          # workstation-media concern image).
+          FROM node:22-bookworm-slim AS builder
 
-          ENV DEBIAN_FRONTEND=noninteractive \
-              NODE_ENV=production \
-              DSH_HOME=/var/lib/workstation \
-              WORKSTATION_DIR=/harness
+          ENV DEBIAN_FRONTEND=noninteractive
 
+          # Native toolchain: the harness `pnpm run build` compiles native
+          # modules and needs a C compiler (`cc`), make and python3.
           RUN apt-get update \
            && apt-get install -y --no-install-recommends \
-                ca-certificates curl git openssh-client python3 make g++ build-essential tini \
+                ca-certificates git python3 make g++ build-essential \
            && rm -rf /var/lib/apt/lists/* \
-           && corepack enable
-
-          # docker CLIENT + compose plugin (NO daemon): the workstation reaches
-          # external tooling - himalaya lives ONLY in the `toolbox` service of the
-          # stack - through the `container` transport of the run-time plugins
-          # config (config/workstation.yml), which shells out to
-          # `docker compose --project-directory <dir> exec -T <service> sh -c ...`
-          # against the daemon socket mounted at run time. Same runtime contract
-          # as services/workstation/Dockerfile (omni-root). BROWSER-FREE STAYS:
-          # no Chromium, no playwright, no browser runtime libs in this image.
-          RUN apt-get update \
-           && apt-get install -y --no-install-recommends ca-certificates git curl openssh-client \
-           && install -m 0755 -d /etc/apt/keyrings \
-           && curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc \
-           && chmod a+r /etc/apt/keyrings/docker.asc \
-           && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian bookworm stable" > /etc/apt/sources.list.d/docker.list \
-           && apt-get update \
-           && apt-get install -y --no-install-recommends docker-ce-cli docker-compose-plugin \
-           && docker --version \
-           && docker compose version \
-           && rm -rf /var/lib/apt/lists/*
-
-          # BROWSER-FREE BY DESIGN (operator rule, post-mortem §8bis.1): the
-          # browser runs in its OWN `browser` service/image; this image must
-          # never ship Chromium or its runtime shared libraries. External
-          # services (himalaya in `toolbox`, the browser) are reached through
-          # the run-time config (config/workstation.yml), never baked into the
-          # image.
+           && corepack enable && corepack prepare pnpm@11.7.0 --activate
 
           WORKDIR /harness
           COPY . .
@@ -137,6 +117,84 @@ jobs:
           RUN rm -f .git/config.worktree
           RUN pnpm install --frozen-lockfile \
            && pnpm run build
+
+          FROM node:22-bookworm-slim AS runtime
+
+          ENV DEBIAN_FRONTEND=noninteractive \
+              NODE_ENV=production \
+              DSH_HOME=/var/lib/workstation \
+              WORKSTATION_DIR=/harness
+
+          # BASE SERVICES ONLY (the minimal contract): bash (base image), ssh
+          # (openssh-client), tini + the tiny stable utilities (jq/rsync/zip).
+          RUN apt-get update \
+           && apt-get install -y --no-install-recommends \
+                ca-certificates curl git openssh-client tini gnupg jq rsync zip unzip \
+           && rm -rf /var/lib/apt/lists/* \
+           && corepack enable && corepack prepare pnpm@11.7.0 --activate
+
+          # docker CLIENT + compose plugin (NO daemon): the workstation reaches
+          # external tooling - himalaya lives ONLY in the `workstation-tools`
+          # service of the stack - through the `container` transport of the
+          # run-time plugins config (config/workstation.yml), which shells out to
+          # `docker compose --project-directory <dir> exec -T <service> sh -c ...`
+          # against the daemon socket mounted at run time. Same runtime contract
+          # as services/workstation/Dockerfile (omni-root). BROWSER-FREE STAYS:
+          # no Chromium, no playwright, no browser runtime libs in this image.
+          # FFMPEG-FREE STAYS: ffmpeg moved to the workstation-media concern
+          # image (decision F), never back into the main image.
+          RUN apt-get update \
+           && apt-get install -y --no-install-recommends ca-certificates git curl openssh-client \
+           && install -m 0755 -d /etc/apt/keyrings \
+           && curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc \
+           && chmod a+r /etc/apt/keyrings/docker.asc \
+           && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian bookworm stable" > /etc/apt/sources.list.d/docker.list \
+           && apt-get update \
+           && apt-get install -y --no-install-recommends docker-ce-cli docker-compose-plugin \
+           && docker --version \
+           && docker compose version \
+           && rm -rf /var/lib/apt/lists/*
+
+          # ZONE-1 additions (gap-analysis report section 3.2, operator
+          # decision E): the cloud control-plane CLIENTS, direct in the main
+          # image (credentials/config live in the worker HOME). Same block as
+          # omni-root services/workstation/Dockerfile.
+          RUN set -eux; \
+              arch=$(dpkg --print-architecture); \
+              curl -fsSL -o /usr/local/bin/yq https://github.com/mikefarah/yq/releases/download/v4.44.3/yq_linux_${arch}; \
+              chmod +x /usr/local/bin/yq; \
+              curl -fsSL -o /usr/local/bin/kubectl https://dl.k8s.io/release/v1.31.3/bin/linux/${arch}/kubectl; \
+              chmod +x /usr/local/bin/kubectl; \
+              curl -fsSL https://get.helm.sh/helm-v3.16.3-linux-${arch}.tar.gz -o /tmp/helm.tgz; \
+              tar -xzf /tmp/helm.tgz -C /tmp; \
+              mv /tmp/linux-${arch}/helm /usr/local/bin/helm; \
+              rm -rf /tmp/helm.tgz /tmp/linux-${arch}; \
+              curl -fsSL https://github.com/cli/cli/releases/download/v2.63.2/gh_2.63.2_linux_${arch}.tar.gz -o /tmp/gh.tgz; \
+              tar -xzf /tmp/gh.tgz -C /tmp; \
+              mv /tmp/gh_2.63.2_linux_${arch}/bin/gh /usr/local/bin/gh; \
+              rm -rf /tmp/gh.tgz /tmp/gh_2.63.2_linux_${arch}; \
+              curl -fsSL https://awscli.amazonaws.com/awscli-exe-linux-${arch}.zip -o /tmp/awscliv2.zip; \
+              unzip -q /tmp/awscliv2.zip -d /tmp/aws; \
+              /tmp/aws/aws/install --update; \
+              rm -rf /tmp/awscliv2.zip /tmp/aws; \
+              curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg | gpg --dearmor -o /usr/share/keyrings/cloud.google.gpg; \
+              echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" > /etc/apt/sources.list.d/google-cloud-sdk.list; \
+              curl -fsSL https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor -o /usr/share/keyrings/microsoft-prod.gpg; \
+              echo "deb [arch=${arch} signed-by=/usr/share/keyrings/microsoft-prod.gpg] https://packages.microsoft.com/repos/azure-cli/ bookworm main" > /etc/apt/sources.list.d/azure-cli.list; \
+              apt-get update; \
+              apt-get install -y --no-install-recommends google-cloud-cli azure-cli; \
+              rm -rf /var/lib/apt/lists/*; \
+              yq --version; kubectl version --client; helm version --short; gh --version; \
+              aws --version; gcloud --version | head -1; az version | head -1
+
+          # BROWSER-FREE BY DESIGN (operator rule, post-mortem §8bis.1): the
+          # browser runs in its OWN `browser` service/image; this image must
+          # never ship Chromium or its runtime shared libraries. External
+          # services (himalaya in `toolbox`, the browser) are reached through
+          # the run-time config (config/workstation.yml), never baked into the
+          # image.
+
+          COPY --from=builder /harness /harness
 
           # The runtime plugin sources live on a NAMED VOLUME so that a
           # container/image rebuild never re-clones them.
