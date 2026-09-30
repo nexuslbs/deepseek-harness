@@ -129,7 +129,7 @@ jobs:
           # (openssh-client), tini + the tiny stable utilities (jq/rsync/zip).
           RUN apt-get update \
            && apt-get install -y --no-install-recommends \
-                ca-certificates curl git openssh-client tini gnupg jq rsync zip unzip \
+                ca-certificates curl git openssh-client tini gnupg jq rsync zip unzip python3 \
            && rm -rf /var/lib/apt/lists/* \
            && corepack enable && corepack prepare pnpm@11.7.0 --activate
 
