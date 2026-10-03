@@ -201,6 +201,27 @@ jobs:
           # container/image rebuild never re-clones them.
           RUN mkdir -p /var/lib/workstation/sources
 
+          # Imperative in-image reload command (operator request, telegram
+          # 2026-10-03, verbatim): "There should even be an imperative command
+          # for that, probably in the dockerfile generated in nexuslbs gh
+          # action". /usr/local/bin/dsh-reload POSTs ONE tool call to the
+          # RUNNING harness facade.
+          #
+          # WHY: the harness serves an already-imported module for a URL for the
+          # LIFE of the process, so re-mounting a config row alone does NOT
+          # refresh that plugin's NESTED relative imports (the children keep the
+          # same URL and stay cached).
+          # WHAT it calls: the `dsh_reload` tool shipped by
+          # nexuslbs/workstation-plugins, which evicts the harness internal ESM
+          # loadCache for the plugin-source graph and re-mounts the named row in
+          # process (no container recreate, no compose lifecycle verb).
+          # Usage:
+          #   docker exec omni-stack-workstation-1 dsh-reload '{"tool":"dsh_reload","params":{"id":"agent-run"}}'
+          RUN printf '%s\n' '#!/bin/sh' 'set -eu' \
+                'exec curl -fsS -X POST "http://127.0.0.1:${WORKSTATION_PORT:-8080}/api/tool/call" -H "content-type: application/json" --data "${1:?usage: dsh-reload '\''<json tool call>'\''}"' \
+                > /usr/local/bin/dsh-reload \
+           && chmod 0755 /usr/local/bin/dsh-reload
+
           EXPOSE 8080
           CMD ["node", "apps/cli/lib/bin.js", "--profile", "headless"]
           DOCKERFILE
